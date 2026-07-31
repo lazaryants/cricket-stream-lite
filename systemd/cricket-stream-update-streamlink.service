@@ -1,0 +1,9 @@
+[Unit]
+Description=Update Streamlink for Cricket Stream Lite
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cricket-stream-component-manager update-streamlink
+TimeoutStartSec=15min

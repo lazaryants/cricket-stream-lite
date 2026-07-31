@@ -1,0 +1,9 @@
+[Unit]
+Description=Update yt-dlp for Cricket Stream Lite
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cricket-stream-component-manager update-ytdlp
+TimeoutStartSec=15min

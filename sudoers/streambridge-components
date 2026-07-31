@@ -1,0 +1,3 @@
+streambridge ALL=(root) NOPASSWD: /bin/systemctl start --no-block cricket-stream-components-check.service
+streambridge ALL=(root) NOPASSWD: /bin/systemctl start --no-block cricket-stream-update-streamlink.service
+streambridge ALL=(root) NOPASSWD: /bin/systemctl start --no-block cricket-stream-update-ytdlp.service

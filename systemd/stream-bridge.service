@@ -1,0 +1,40 @@
+[Unit]
+Description=Cricket Stream Bridge
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=streambridge
+Group=streambridge
+WorkingDirectory=/opt/stream-bridge
+
+Environment="PATH=/opt/stream-bridge-env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+
+ExecStart=/opt/stream-bridge-env/bin/gunicorn \
+    --no-control-socket \
+    --workers 1 \
+    --threads 4 \
+    --bind 127.0.0.1:5000 \
+    --timeout 30 \
+    --graceful-timeout 15 \
+    --keep-alive 5 \
+    --access-logfile - \
+    --error-logfile - \
+    --capture-output \
+    app:app
+
+Restart=always
+RestartSec=5
+TimeoutStopSec=25
+KillMode=mixed
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/stream-bridge/config /opt/stream-bridge/logs
+
+[Install]
+WantedBy=multi-user.target

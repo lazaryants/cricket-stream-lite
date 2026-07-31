@@ -1,0 +1,8 @@
+[Unit]
+Description=Check Cricket Stream Lite component versions
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cricket-stream-component-manager check

@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cricket Stream Bridge — Настройка трансляций</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <style>
+        .container { max-width: 1200px; }
+        h2 { color:#f2e9e4; margin:20px 0 10px; font-size:22px; }
+        .status-bar { border-radius:5px; margin-bottom:20px; border:1px solid #2a2a3e; }
+        .stream-item { background:#1a1a2e; padding:15px; margin:10px 0; border-radius:8px; display:flex; justify-content:space-between; align-items:center; border:1px solid #2a2a3e; transition:background .2s; gap:15px; }
+        .stream-item:hover { background:#22223b; }
+        .stream-item.active { border-left:4px solid #4CAF50; }
+        .stream-item.inactive { border-left:4px solid #666; }
+        .stream-info { flex:1; min-width:0; }
+        .stream-info strong { font-size:16px; color:#f2e9e4; }
+        .stream-info small { color:#9a8c98; display:block; margin:3px 0; font-size:12px; overflow-wrap:anywhere; }
+        .stream-controls { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+        .btn-edit { background:#607d8b; color:white; }
+        .action-pending { opacity:.75; cursor:wait!important; }
+        .monitoring-toggle { display:inline-flex; align-items:center; gap:7px; margin-top:8px; color:#d8d0d8; font-size:13px; cursor:pointer; }
+        .monitoring-toggle input { width:17px; height:17px; cursor:pointer; }
+        .stream-item.busy { opacity:.82; }
+        .last-error { margin-top:8px; padding:8px 10px; border-radius:5px; background:rgba(244,67,54,.12); border:1px solid rgba(244,67,54,.5); color:#ffb3b3; font-size:12px; max-width:760px; word-break:break-word; }
+        .recovery-note { color:#ffca7a; font-weight:bold; font-size:12px; margin-top:6px; }
+        .state-badge { display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:999px; font-weight:700; border:1px solid transparent; }
+        .state-running { color:#b9f6ca; background:rgba(76,175,80,.14); border-color:rgba(76,175,80,.55); }
+        .state-starting,.state-recovering { color:#ffe0a3; background:rgba(255,167,38,.14); border-color:rgba(255,167,38,.55); }
+        .state-error { color:#ffc1c1; background:rgba(244,67,54,.14); border-color:rgba(244,67,54,.55); }
+        .state-stopped { color:#d0d0d0; background:rgba(158,158,158,.12); border-color:rgba(158,158,158,.45); }
+        .engine-badge { display:inline-block; padding:2px 7px; border-radius:999px; background:rgba(33,150,243,.13); border:1px solid rgba(33,150,243,.45); color:#b9dcff; font-size:11px; }
+
+        .modal { display:none; position:fixed; inset:0; z-index:1200; background:rgba(0,0,0,.82); padding:18px; overflow:auto; }
+        .modal.show { display:flex; align-items:center; justify-content:center; }
+        .modal-card { width:min(720px,100%); background:#1a1a2e; border:1px solid #34344d; border-radius:12px; box-shadow:0 20px 60px rgba(0,0,0,.55); overflow:hidden; }
+        .modal-header { display:flex; justify-content:space-between; align-items:center; padding:18px 20px; border-bottom:1px solid #34344d; background:#22223b; }
+        .modal-header h3 { margin:0; color:#f2e9e4; font-size:20px; }
+        .modal-close { background:transparent; color:#c9ada7; font-size:25px; padding:0 4px; line-height:1; }
+        .modal-body { padding:20px; }
+        .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:15px; }
+        .form-field { display:flex; flex-direction:column; gap:6px; }
+        .form-field.full { grid-column:1/-1; }
+        .form-field label { color:#d7cdd4; font-size:13px; font-weight:600; }
+        .form-field input,.form-field select { width:100%; border:1px solid #45455f; border-radius:7px; background:#10101d; color:#f2e9e4; padding:11px 12px; font:inherit; outline:none; }
+        .form-field input:focus,.form-field select:focus { border-color:#7d83b2; box-shadow:0 0 0 3px rgba(125,131,178,.18); }
+        .form-help { color:#8f8791; font-size:11px; line-height:1.4; }
+        .form-error { color:#ff8f8f; font-size:12px; min-height:16px; }
+        .checkbox-row { display:flex; gap:9px; align-items:flex-start; color:#d7cdd4; font-size:13px; cursor:pointer; }
+        .checkbox-row input { width:18px; height:18px; margin-top:1px; }
+        .modal-actions { display:flex; justify-content:flex-end; gap:10px; padding:16px 20px; border-top:1px solid #34344d; background:#171727; }
+        .btn-cancel { background:#555568; color:white; }
+        .btn-save { background:#2196F3; color:white; min-width:130px; }
+        .btn-save:disabled { opacity:.6; cursor:wait; }
+
+        .logs-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.9); z-index:1300; padding:20px; }
+        .logs-modal.show { display:flex; align-items:center; justify-content:center; }
+        .logs-content { background:#1a1a2e; border-radius:10px; padding:20px; max-width:90%; width:900px; max-height:80vh; overflow:auto; border:1px solid #2a2a3e; }
+        .logs-content h3 { color:#f2e9e4; margin-bottom:15px; }
+        .logs-content pre { background:#000; padding:15px; border-radius:5px; font-size:12px; overflow-x:auto; color:#e0e0e0; white-space:pre-wrap; word-wrap:break-word; }
+        .no-streams { text-align:center; padding:50px; color:#9a8c98; font-size:16px; }
+
+
+        .components-panel { margin-top:28px; background:#1a1a2e; border:1px solid #2a2a3e; border-radius:10px; overflow:hidden; }
+        .components-header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 18px; background:#22223b; border-bottom:1px solid #34344d; }
+        .components-header h2 { margin:0; font-size:19px; }
+        .components-meta { color:#9a8c98; font-size:12px; }
+        .components-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; padding:16px; }
+        .component-card { background:#161625; border:1px solid #303047; border-radius:8px; padding:14px; min-width:0; }
+        .component-title { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; }
+        .component-title strong { color:#f2e9e4; font-size:16px; }
+        .component-row { display:flex; justify-content:space-between; gap:12px; color:#b9b0b8; font-size:13px; margin:6px 0; }
+        .component-row span:last-child { text-align:right; color:#f2e9e4; overflow-wrap:anywhere; }
+        .component-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+        .component-status-ok { color:#b9f6ca; }
+        .component-status-update { color:#ffe0a3; }
+        .component-status-error { color:#ffc1c1; }
+        .component-log { margin:0 16px 16px; padding:10px 12px; background:#10101c; border:1px solid #303047; border-radius:7px; color:#bdb5bd; font-size:12px; white-space:pre-wrap; max-height:150px; overflow:auto; display:none; }
+
+        @media (max-width:760px) {
+            .stream-item { flex-direction:column; align-items:stretch; }
+            .stream-controls { justify-content:flex-start; }
+            .form-grid { grid-template-columns:1fr; }
+            .form-field.full { grid-column:auto; }
+            .modal { padding:8px; }
+            .modal-card { max-height:96vh; overflow:auto; }
+            .components-grid { grid-template-columns:1fr; }
+            .components-header { align-items:flex-start; flex-direction:column; }
+        }
+    </style>
+</head>
+<body>
+<div class="header">
+    <h1>🏏 Cricket Stream Bridge</h1>
+    <div class="nav">
+        <a href="/">📺 Монитор трансляций</a>
+        <a href="/downloads/">⬇️ Скачать видео</a>
+            <a href="/admin/" class="active">⚙️ Настройка трансляций</a>
+    </div>
+</div>
+<div class="container">
+    <div class="status-bar">
+        <div><strong>Server:</strong> cricket-stream.icu (USA)<br><strong>Активные трансляции:</strong> <span id="active-count">0</span></div>
+        <div id="status-text">✅ Сервер работает</div>
+    </div>
+    <h2>Настройка трансляций</h2>
+    <div id="streams-container"><div class="no-streams">Загрузка...</div></div>
+    <button class="btn-add" onclick="openStreamModal()">+ Добавить трансляцию</button>
+    <div id="error-message" class="error"></div>
+
+    <section class="components-panel" aria-labelledby="components-title">
+        <div class="components-header">
+            <div>
+                <h2 id="components-title">Компоненты системы</h2>
+                <div id="components-checked-at" class="components-meta">Версии ещё не проверялись</div>
+            </div>
+            <button id="components-check-button" class="btn-edit" onclick="checkComponents()">Проверить обновления</button>
+        </div>
+        <div id="components-grid" class="components-grid"><div class="no-streams">Загрузка сведений о компонентах...</div></div>
+        <pre id="components-log" class="component-log"></pre>
+    </section>
+</div>
+
+<div id="stream-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="stream-modal-title">
+    <div class="modal-card">
+        <div class="modal-header">
+            <h3 id="stream-modal-title">Добавить трансляцию</h3>
+            <button class="modal-close" type="button" onclick="closeStreamModal()" aria-label="Закрыть">×</button>
+        </div>
+        <form id="stream-form" novalidate>
+            <div class="modal-body">
+                <input type="hidden" id="stream-id">
+                <div class="form-grid">
+                    <div class="form-field full">
+                        <label for="stream-name">Название</label>
+                        <input id="stream-name" maxlength="200" autocomplete="off" placeholder="Например: Основной эфир">
+                        <div class="form-error" id="error-name"></div>
+                    </div>
+                    <div class="form-field full">
+                        <label for="source-url">URL источника</label>
+                        <input id="source-url" type="url" autocomplete="off" placeholder="https://www.twitch.tv/channel">
+                        <div class="form-help">YouTube, Twitch, Kick, VK и другие поддерживаемые видеохостинги.</div>
+                        <div class="form-error" id="error-source-url"></div>
+                    </div>
+                    <div class="form-field">
+                        <label for="source-type">Тип источника</label>
+                        <select id="source-type">
+                            <option value="youtube">YouTube</option>
+                            <option value="twitch">Twitch</option>
+                            <option value="kick">Kick</option>
+                            <option value="vk">VK / VK Видео</option>
+                            <option value="other">Другой</option>
+                        </select>
+                    </div>
+                    <div class="form-field">
+                        <label for="stream-engine">Движок получения</label>
+                        <select id="stream-engine">
+                            <option value="auto">Автоматически</option>
+                            <option value="streamlink">Streamlink</option>
+                            <option value="yt-dlp">yt-dlp</option>
+                        </select>
+                        <div class="form-help">Пока поле сохраняется в конфигурации; фактическое подключение yt-dlp будет следующим этапом.</div>
+                    </div>
+                    <div class="form-field full">
+                        <label for="target-rtmp">RTMP/RTMPS назначения</label>
+                        <input id="target-rtmp" autocomplete="off" placeholder="rtmp://server/app/key">
+                        <div class="form-error" id="error-target-rtmp"></div>
+                    </div>
+                    <div class="form-field full">
+                        <label class="checkbox-row">
+                            <input id="show-on-monitoring" type="checkbox" checked>
+                            <span>Показывать эту трансляцию на странице «Монитор трансляций», независимо от того, запущена она или остановлена.</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="form-error" id="form-global-error"></div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn-cancel" onclick="closeStreamModal()">Отмена</button>
+                <button type="submit" id="stream-save-button" class="btn-save">Сохранить</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="logs-modal" class="logs-modal">
+    <div class="logs-content">
+        <h3>Последние строки журнала</h3>
+        <pre id="logs-content"></pre>
+        <button class="btn-stop" onclick="closeLogs()">Закрыть</button>
+    </div>
+</div>
+
+<script>
+let currentStreams = [];
+const pendingActions = new Map();
+
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'})[char]);
+}
+function showError(message) {
+    const el=document.getElementById('error-message'); el.textContent=message; el.style.display='block';
+    setTimeout(()=>{el.style.display='none';},5000);
+}
+function setPending(id, action) { action ? pendingActions.set(id,action) : pendingActions.delete(id); loadStreams(); }
+function actionLabel(action) { return ({start:'Запуск...',stop:'Остановка...',restart:'Перезапуск...'})[action] || 'Выполнение...'; }
+async function runStreamAction(id, action) {
+    if (pendingActions.has(id)) return;
+    setPending(id,action);
+    try {
+        const response=await fetch(`/api/streams/${id}/${action}`,{method:'POST'});
+        const data=await response.json();
+        if(!response.ok) throw new Error(data.error||'Неизвестная ошибка');
+    } catch(error) { showError('Ошибка: '+error.message); }
+    finally { pendingActions.delete(id); await Promise.all([loadStreams(),loadStatus()]); }
+}
+async function setMonitoringVisibility(id, checked) {
+    const checkbox=document.getElementById(`monitoring-${id}`); if(checkbox) checkbox.disabled=true;
+    try {
+        const response=await fetch(`/api/streams/${id}/monitoring-visibility`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({show_on_monitoring:checked})});
+        const data=await response.json(); if(!response.ok) throw new Error(data.error||'Неизвестная ошибка');
+    } catch(error) { if(checkbox) checkbox.checked=!checked; showError('Не удалось изменить отображение: '+error.message); }
+    finally { if(checkbox) checkbox.disabled=false; }
+}
+function formatUptime(seconds) {
+    seconds=Math.max(0,Number(seconds)||0); const h=Math.floor(seconds/3600),m=Math.floor((seconds%3600)/60),s=seconds%60;
+    return [h,m,s].map(v=>String(v).padStart(2,'0')).join(':');
+}
+async function loadStatus() {
+    try { const r=await fetch('/api/status'); const d=await r.json(); document.getElementById('active-count').textContent=d.active_streams; }
+    catch { document.getElementById('status-text').textContent='❌ Ошибка связи'; }
+}
+async function loadStreams() {
+    try {
+        const response=await fetch('/api/streams');
+        const streams=await response.json();
+        if(!response.ok || !Array.isArray(streams)) throw new Error(streams.error||'Некорректный ответ API');
+        currentStreams=streams;
+        const container=document.getElementById('streams-container');
+        if(!streams.length) { container.innerHTML='<div class="no-streams">Трансляции пока не настроены.</div>'; return; }
+        container.innerHTML=streams.map(stream=>{
+            const metrics=stream.metrics||{}; const pending=pendingActions.get(stream.id); const recovering=stream.recovering===true;
+            const lastError=metrics.last_error||stream.last_error; const state=pending?'starting':(stream.state||(stream.active?'running':(recovering?'recovering':(lastError?'error':'stopped'))));
+            const info={running:['state-running','● В эфире'],starting:['state-starting','● Запускается'],recovering:['state-recovering','● Восстановление'],error:['state-error','● Ошибка'],stopped:['state-stopped','● Остановлена']}[state]||['state-stopped','● Неизвестно'];
+            const status=pending?`<span class="state-badge state-starting">⏳ ${actionLabel(pending)}</span>`:`<span class="state-badge ${info[0]}">${info[1]}</span>`;
+            const engine=stream.engine||'auto'; const engineText=stream.engine_used?`${engine} → ${stream.engine_used}`:engine; const disabled=pending?'disabled':'';
+            return `<div class="stream-item ${stream.active?'active':'inactive'} ${pending?'busy':''}">
+                <div class="stream-info">
+                    <strong>${escapeHtml(stream.name)}</strong> <span class="engine-badge">${escapeHtml(engineText)}</span>
+                    <small>Тип: ${escapeHtml(stream.source_type||'unknown')}</small>
+                    <small>📡 Источник: ${escapeHtml(stream.source_url)}</small>
+                    <small>🎯 Назначение: ${escapeHtml(stream.target_rtmp)}</small>
+                    <small>Статус: ${status}${stream.active&&!pending?` | ⏱ ${formatUptime(metrics.uptime)}`:''}${(metrics.restart_count||stream.restart_count)>0?` | 🔄 ${metrics.restart_count||stream.restart_count}`:''}</small>
+                    ${metrics.fps?`<small>📊 ${metrics.fps} FPS | ${escapeHtml(metrics.bitrate||'?')} | ${escapeHtml(metrics.resolution||'?')}</small>`:''}
+                    ${recovering?'<div class="recovery-note">Ожидается автоматическая попытка запуска. «Остановить» отменит восстановление.</div>':''}
+                    ${lastError?`<div class="last-error"><strong>Последняя ошибка:</strong> ${escapeHtml(lastError)}</div>`:''}
+                    <label class="monitoring-toggle"><input id="monitoring-${stream.id}" type="checkbox" ${stream.show_on_monitoring!==false?'checked':''} onchange="setMonitoringVisibility(${stream.id},this.checked)">Показывать на странице «Монитор трансляций»</label>
+                </div>
+                <div class="stream-controls">
+                    ${pending?`<button class="action-pending" disabled>⏳ ${actionLabel(pending)}</button>`:(stream.active?`<button class="btn-stop" onclick="runStreamAction(${stream.id},'stop')">Остановить</button><button class="btn-restart" onclick="confirmRestart(${stream.id})">Перезапустить</button>`:(recovering?`<button class="btn-stop" onclick="runStreamAction(${stream.id},'stop')">Отменить восстановление</button>`:`<button class="btn-start" onclick="runStreamAction(${stream.id},'start')">Запустить</button>`))}
+                    <button class="btn-edit" ${disabled} onclick="openStreamModal(${stream.id})">Изменить</button>
+                    <button class="btn-logs" ${disabled} onclick="showLogs(${stream.id})">Логи</button>
+                    <button class="btn-delete" ${disabled} onclick="deleteStream(${stream.id})">Удалить</button>
+                </div>
+            </div>`;
+        }).join('');
+    } catch(error) { showError('Не удалось загрузить трансляции: '+error.message); }
+}
+function confirmRestart(id) { if(confirm('Перезапустить эту трансляцию?')) runStreamAction(id,'restart'); }
+async function deleteStream(id) {
+    if(!confirm('Удалить эту трансляцию?')) return;
+    try { const r=await fetch(`/api/streams/${id}`,{method:'DELETE'}); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Ошибка удаления'); await Promise.all([loadStreams(),loadStatus()]); }
+    catch(error){showError(error.message);}
+}
+async function showLogs(id) {
+    try { const r=await fetch(`/api/streams/${id}/logs`); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Ошибка чтения журнала'); document.getElementById('logs-content').textContent=d.logs||'Журнал пуст'; document.getElementById('logs-modal').classList.add('show'); }
+    catch(error){showError(error.message);}
+}
+function closeLogs(){document.getElementById('logs-modal').classList.remove('show');}
+
+function clearFormErrors(){ document.querySelectorAll('#stream-form .form-error').forEach(el=>el.textContent=''); }
+function setFieldError(id,message){ document.getElementById(id).textContent=message; }
+function validateForm(data){
+    clearFormErrors(); let valid=true;
+    if(!data.name.trim()){setFieldError('error-name','Введите название.');valid=false;}
+    try { const u=new URL(data.source_url.trim()); if(!['http:','https:'].includes(u.protocol)) throw new Error(); }
+    catch {setFieldError('error-source-url','Введите корректный URL, начинающийся с http:// или https://');valid=false;}
+    if(!/^rtmps?:\/\/\S+$/i.test(data.target_rtmp.trim())){setFieldError('error-target-rtmp','Введите адрес, начинающийся с rtmp:// или rtmps://');valid=false;}
+    return valid;
+}
+function openStreamModal(id=null){
+    clearFormErrors();
+    const stream=id===null?null:currentStreams.find(item=>item.id===id);
+    if(stream&&stream.active){showError('Сначала остановите трансляцию, затем измените её настройки.');return;}
+    document.getElementById('stream-id').value=stream?stream.id:'';
+    document.getElementById('stream-modal-title').textContent=stream?'Изменить трансляцию':'Добавить трансляцию';
+    document.getElementById('stream-name').value=stream?.name||'';
+    document.getElementById('source-url').value=stream?.source_url||'';
+    document.getElementById('source-type').value=stream?.source_type||'youtube';
+    document.getElementById('stream-engine').value=stream?.engine||'auto';
+    document.getElementById('target-rtmp').value=stream?.target_rtmp||'';
+    document.getElementById('show-on-monitoring').checked=stream?.show_on_monitoring!==false;
+    document.getElementById('stream-modal').classList.add('show');
+    setTimeout(()=>document.getElementById('stream-name').focus(),50);
+}
+function closeStreamModal(){document.getElementById('stream-modal').classList.remove('show');clearFormErrors();}
+
+document.getElementById('stream-form').addEventListener('submit',async event=>{
+    event.preventDefault();
+    const id=document.getElementById('stream-id').value;
+    const existing=id?currentStreams.find(item=>item.id===Number(id)):null;
+    const data={
+        name:document.getElementById('stream-name').value.trim(),
+        source_url:document.getElementById('source-url').value.trim(),
+        source_type:document.getElementById('source-type').value,
+        engine:document.getElementById('stream-engine').value,
+        target_rtmp:document.getElementById('target-rtmp').value.trim(),
+        enabled:existing?.enabled!==false,
+        show_on_monitoring:document.getElementById('show-on-monitoring').checked
+    };
+    if(!validateForm(data)) return;
+    const button=document.getElementById('stream-save-button'); button.disabled=true; button.textContent='Сохранение...';
+    try {
+        const response=await fetch(id?`/api/streams/${id}`:'/api/streams',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+        const result=await response.json();
+        if(!response.ok) throw new Error(result.error||'Не удалось сохранить трансляцию');
+        closeStreamModal(); await Promise.all([loadStreams(),loadStatus()]);
+    } catch(error){document.getElementById('form-global-error').textContent=error.message;}
+    finally {button.disabled=false;button.textContent='Сохранить';}
+});
+
+document.getElementById('stream-modal').addEventListener('click',event=>{if(event.target.id==='stream-modal')closeStreamModal();});
+document.addEventListener('keydown',event=>{if(event.key==='Escape'){closeStreamModal();closeLogs();}});
+
+
+function componentStatusText(component) {
+    if (component.updating) return ['component-status-update','Обновление...'];
+    if (component.error) return ['component-status-error','Ошибка'];
+    if (component.update_available) return ['component-status-update','Доступно обновление'];
+    if (component.installed) return ['component-status-ok','Актуально'];
+    return ['component-status-error','Не определено'];
+}
+function componentCard(name, title, component, canUpdate) {
+    component = component || {};
+    const status = componentStatusText(component);
+    const installed = component.installed || '—';
+    const available = component.available || component.candidate || '—';
+    const updateButton = canUpdate ? `<button class="btn-edit" ${component.updating?'disabled':''} onclick="updateComponent('${name}','${title}')">${component.updating?'Обновление...':'Обновить'}</button>` : '';
+    return `<div class="component-card">
+        <div class="component-title"><strong>${escapeHtml(title)}</strong><span class="${status[0]}">${status[1]}</span></div>
+        <div class="component-row"><span>Установлено</span><span>${escapeHtml(installed)}</span></div>
+        <div class="component-row"><span>${name==='ffmpeg'?'Доступно в Ubuntu':'Доступно'}</span><span>${escapeHtml(available)}</span></div>
+        ${component.updated_at?`<div class="component-row"><span>Обновлено</span><span>${escapeHtml(component.updated_at)}</span></div>`:''}
+        ${component.error?`<div class="last-error">${escapeHtml(component.error)}</div>`:''}
+        <div class="component-actions">${updateButton}</div>
+    </div>`;
+}
+async function loadComponents() {
+    try {
+        const response = await fetch('/api/components');
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Ошибка получения версий');
+        const components = data.components || {};
+        document.getElementById('components-grid').innerHTML = [
+            componentCard('streamlink','Streamlink',components.streamlink,true),
+            componentCard('yt-dlp','yt-dlp',components['yt-dlp'],true),
+            componentCard('ffmpeg','FFmpeg',components.ffmpeg,false),
+        ].join('');
+        document.getElementById('components-checked-at').textContent = data.checked_at ? `Последняя проверка: ${data.checked_at}` : 'Версии ещё не проверялись';
+        const button = document.getElementById('components-check-button');
+        button.disabled = data.checking === true;
+        button.textContent = data.checking ? 'Проверка...' : 'Проверить обновления';
+        const log = document.getElementById('components-log');
+        if (data.last_log) { log.textContent = data.last_log; log.style.display = 'block'; }
+        else { log.style.display = 'none'; }
+    } catch (error) { showError('Не удалось получить сведения о компонентах: ' + error.message); }
+}
+async function checkComponents() {
+    const button=document.getElementById('components-check-button'); button.disabled=true; button.textContent='Проверка...';
+    try {
+        const response=await fetch('/api/components/check',{method:'POST'});
+        const data=await response.json(); if(!response.ok) throw new Error(data.error||'Не удалось запустить проверку');
+        setTimeout(loadComponents,1500);
+    } catch(error) { showError(error.message); button.disabled=false; button.textContent='Проверить обновления'; }
+}
+async function updateComponent(component,title,force=false) {
+    if (!force && !confirm(`Обновить ${title}? Backend будет перезапущен после проверки новой версии.`)) return;
+    try {
+        const response=await fetch(`/api/components/update/${encodeURIComponent(component)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({force})});
+        const data=await response.json();
+        if(response.status===409 && data.requires_confirmation) {
+            if(confirm(`${data.error}
+
+Продолжить обновление сейчас?`)) return updateComponent(component,title,true);
+            return;
+        }
+        if(!response.ok) throw new Error(data.error||'Не удалось запустить обновление');
+        showError(`Обновление ${title} запущено. Соединение может кратковременно прерваться.`);
+        setTimeout(loadComponents,3000);
+    } catch(error) { showError(error.message); }
+}
+
+loadStatus(); loadStreams(); loadComponents(); setInterval(()=>{loadStatus();loadStreams();},5000); setInterval(loadComponents,15000);
+</script>
+</body>
+</html>

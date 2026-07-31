@@ -1,0 +1,6 @@
+[Unit]
+Description=Rotate Cricket Stream Bridge logs
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/logrotate -s /var/lib/logrotate/stream-bridge.status /etc/logrotate.d/stream-bridge

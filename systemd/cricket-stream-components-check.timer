@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Cricket Stream Lite component version check
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=24h
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

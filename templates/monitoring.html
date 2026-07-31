@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cricket Stream Bridge — Монитор трансляций</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15"></script>
+    <link rel="stylesheet" href="/static/styles.css">
+    <style>
+        .streams-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
+            gap: 20px;
+        }
+        .stream-card {
+            background: #1a1a2e;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            border: 1px solid #2a2a3e;
+            transition: transform 0.2s;
+        }
+        .stream-card:hover { transform: translateY(-2px); }
+        .stream-card.inactive { opacity: 0.5; }
+        
+        .video-container {
+            position: relative;
+            width: 100%;
+            padding-top: 56.25%;
+            background: #000;
+        }
+        .video-container video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            outline: none;
+        }
+        /* Стили для элементов управления, чтобы они были поверх видео */
+        .video-container video::-webkit-media-controls {
+            background: rgba(0, 0, 0, 0.5);
+        }
+        
+        .video-overlay {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            display: flex;
+            gap: 5px;
+            z-index: 10;
+            pointer-events: none; /* Чтобы клики проходили сквозь бейдж к видео */
+        }
+        .video-placeholder {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #000;
+            color: #666;
+            font-size: 16px;
+        }
+        .stream-info { padding: 15px; }
+        .stream-name {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #f2e9e4;
+        }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .metric {
+            background: rgba(255,255,255,0.05);
+            padding: 8px;
+            border-radius: 5px;
+            text-align: center;
+            border: 1px solid #2a2a3e;
+        }
+        .metric-value { font-size: 16px; font-weight: bold; }
+        .metric-label { font-size: 11px; color: #9a8c98; margin-top: 2px; }
+        .stream-details { margin-top: 10px; font-size: 12px; color: #9a8c98; }
+        .stream-details div { margin: 3px 0; }
+        .state-row { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
+        .state-badge { display:inline-flex; align-items:center; padding:4px 9px; border-radius:999px; font-size:12px; font-weight:700; border:1px solid transparent; }
+        .state-running { color:#b9f6ca; background:rgba(76,175,80,.14); border-color:rgba(76,175,80,.55); }
+        .state-starting, .state-recovering { color:#ffe0a3; background:rgba(255,167,38,.14); border-color:rgba(255,167,38,.55); }
+        .state-error { color:#ffc1c1; background:rgba(244,67,54,.14); border-color:rgba(244,67,54,.55); }
+        .state-stopped { color:#d0d0d0; background:rgba(158,158,158,.12); border-color:rgba(158,158,158,.45); }
+        .uptime-clock { font-variant-numeric: tabular-nums; font-weight:700; color:#f2e9e4; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🏏 Cricket Stream Bridge</h1>
+        <div class="nav">
+            <a href="/" class="active">📺 Монитор трансляций</a>
+            <a href="/downloads/">⬇️ Скачать видео</a>
+            <a href="/admin/">⚙️ Настройка трансляций</a>
+        </div>
+    </div>
+    
+    <div class="status-bar">
+        <div class="status">
+            <div class="status-item">
+                <div class="status-dot"></div>
+                <span>Server: USA (hip-hosting)</span>
+            </div>
+            <div class="status-item">
+                <span>Active: <strong id="active-count">0</strong></span>
+            </div>
+            <div class="status-item">
+                <span>Total: <strong id="total-count">0</strong></span>
+            </div>
+        </div>
+        <div><span id="last-update">Last update: —</span></div>
+    </div>
+    
+    <div class="container">
+        <div id="streams-container" class="streams-grid"></div>
+    </div>
+    <script>
+        const players = {};
+        const createdCards = new Set();
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, char => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            })[char]);
+        }
+        
+        function formatUptime(seconds) {
+            if (seconds === null || seconds === undefined) return '00:00:00';
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = seconds % 60;
+            return [h, m, s].map(value => String(value).padStart(2, '0')).join(':');
+        }
+        
+        function getMetricClass(value, goodThreshold, warningThreshold, reverse = false) {
+            if (value === null || value === undefined) return '';
+            if (reverse) {
+                if (value <= goodThreshold) return 'good';
+                if (value <= warningThreshold) return 'warning';
+                return 'error';
+            }
+            if (value >= goodThreshold) return 'good';
+            if (value >= warningThreshold) return 'warning';
+            return 'error';
+        }
+        
+        function initPlayer(videoId, hlsUrl) {
+            const video = document.getElementById(videoId);
+            if (!video) return;
+            
+            if (players[videoId]) {
+                try { players[videoId].destroy(); } catch(e) {}
+                delete players[videoId];
+            }
+            
+            if (Hls.isSupported()) {
+                const hls = new Hls({
+                    debug: false,
+                    enableWorker: true,
+                    lowLatencyMode: false,
+                    liveSyncDurationCount: 4,
+                    liveMaxLatencyDurationCount: 10,
+                    maxLiveSyncPlaybackRate: 1.05,
+                    nudgeMaxRetry: 10,
+                    maxBufferLength: 30,
+                    maxMaxBufferLength: 60,
+                    maxBufferSize: 60 * 1000 * 1000,
+                    manifestLoadingMaxRetry: 10,
+                    manifestLoadingRetryDelay: 1000,
+                    levelLoadingMaxRetry: 10,
+                    fragLoadingMaxRetry: 10,
+                });
+                
+                hls.loadSource(hlsUrl);
+                hls.attachMedia(video);
+                
+                hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                    video.muted = true; // Обязательно для автозапуска
+                    video.play().catch(e => console.log('Autoplay blocked:', e.message));
+                });
+                
+                hls.on(Hls.Events.ERROR, (event, data) => {
+                    if (data.fatal) {
+                        switch(data.type) {
+                            case Hls.ErrorTypes.NETWORK_ERROR:
+                                setTimeout(() => hls.startLoad(), 1000);
+                                break;
+                            case Hls.ErrorTypes.MEDIA_ERROR:
+                                hls.recoverMediaError();
+                                break;
+                            default:
+                                hls.destroy();
+                                setTimeout(() => initPlayer(videoId, hlsUrl), 2000);
+                                break;
+                        }
+                    }
+                });
+                players[videoId] = hls;
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = hlsUrl;
+                video.addEventListener('loadedmetadata', () => {
+                    video.muted = true;
+                    video.play().catch(e => console.log('Autoplay blocked:', e.message));
+                });
+            }
+        }
+        
+        function updateStreamCard(stream) {
+            const cardId = `card-${stream.id}`;
+            const videoId = `video-${stream.id}`;
+            const metrics = stream.metrics || {};
+            const state = stream.state || (stream.active ? 'running' : (stream.recovering ? 'recovering' : (stream.last_error ? 'error' : 'stopped')));
+            const stateInfo = {
+                running: ['state-running', '● В эфире'],
+                starting: ['state-starting', '● Запускается'],
+                recovering: ['state-recovering', '● Восстановление'],
+                error: ['state-error', '● Ошибка'],
+                stopped: ['state-stopped', '● Остановлена']
+            }[state] || ['state-stopped', '● Неизвестно'];
+            const stateHtml = `<div class="state-row"><span class="state-badge ${stateInfo[0]}">${stateInfo[1]}</span><span class="uptime-clock">${stream.active ? formatUptime(metrics.uptime) : '—'}</span></div>`;
+            
+            let card = document.getElementById(cardId);
+            if (!card) {
+                card = document.createElement('div');
+                card.id = cardId;
+                card.className = 'stream-card';
+                document.getElementById('streams-container').appendChild(card);
+            }
+            
+            card.className = `stream-card ${stream.active ? '' : 'inactive'}`;
+            
+            const existingVideo = document.getElementById(videoId);
+            const shouldHaveVideo = stream.active && stream.hls_url;
+            
+            let videoHtml;
+            if (shouldHaveVideo) {
+                if (!existingVideo) {
+                    // ДОБАВЛЕН АТРИБУТ controls для отображения стандартной панели (звук, полный экран)
+                    videoHtml = `<div class="video-container"><video id="${videoId}" muted playsinline autoplay controls></video><div class="video-overlay"><span class="badge live">● LIVE</span></div></div>`;
+                } else {
+                    videoHtml = null;
+                }
+            } else {
+                videoHtml = `<div class="video-container"><div class="video-placeholder"><span class="badge offline">OFFLINE</span></div></div>`;
+            }
+            
+            let metricsHtml = '';
+            if (stream.active && metrics.status === 'running') {
+                const fpsClass = getMetricClass(metrics.fps, 25, 15);
+                const brClass = getMetricClass(metrics.bitrate_numeric, 2000, 1000);
+                const dropClass = getMetricClass(metrics.dropped_frames, 10, 50, true);
+                metricsHtml = `
+                    <div class="metrics-grid">
+                        <div class="metric"><div class="metric-value ${fpsClass}">${metrics.fps || '—'}</div><div class="metric-label">FPS</div></div>
+                        <div class="metric"><div class="metric-value ${brClass}">${metrics.bitrate || '—'}</div><div class="metric-label">Bitrate</div></div>
+                        <div class="metric"><div class="metric-value good">${metrics.resolution || '—'}</div><div class="metric-label">Resolution</div></div>
+                        <div class="metric"><div class="metric-value ${dropClass}">${metrics.dropped_frames || 0}</div><div class="metric-label">Dropped</div></div>
+                    </div>`;
+            }
+            
+            let infoDiv = card.querySelector('.stream-info');
+            if (!infoDiv) {
+                card.innerHTML = `${videoHtml || ''}<div class="stream-info"><div class="stream-name">${escapeHtml(stream.name)}</div>${stateHtml}${metricsHtml}<div class="stream-details"><div>📡 Source: ${escapeHtml(stream.source_url)}</div><div>🎯 Target: ${escapeHtml(stream.target_rtmp)}</div><div>⏱ Время в эфире: ${stream.active ? formatUptime(metrics.uptime) : '—'}</div>${metrics.restart_count > 0 ? `<div>🔄 Restarts: ${metrics.restart_count}</div>` : ''}</div></div>`;
+            } else {
+                const streamName = card.querySelector('.stream-name');
+                if (streamName) streamName.textContent = stream.name;
+                const oldState = card.querySelector('.state-row');
+                if (oldState) oldState.outerHTML = stateHtml;
+                const oldMetrics = card.querySelector('.metrics-grid');
+                if (oldMetrics) oldMetrics.remove();
+                if (metricsHtml) infoDiv.insertAdjacentHTML('afterbegin', metricsHtml);
+                const details = card.querySelector('.stream-details');
+                if (details) {
+                    details.innerHTML = `<div>📡 Source: ${escapeHtml(stream.source_url)}</div><div>🎯 Target: ${escapeHtml(stream.target_rtmp)}</div><div>⏱ Время в эфире: ${stream.active ? formatUptime(metrics.uptime) : '—'}</div>${metrics.restart_count > 0 ? `<div>🔄 Restarts: ${metrics.restart_count}</div>` : ''}`;
+                }
+            }
+            
+            if (shouldHaveVideo && !players[videoId]) {
+                setTimeout(() => initPlayer(videoId, stream.hls_url), 100);
+            }
+            if (!shouldHaveVideo && players[videoId]) {
+                try { players[videoId].destroy(); } catch(e) {}
+                delete players[videoId];
+            }
+            createdCards.add(stream.id);
+        }
+        
+        async function loadStreams() {
+            try {
+                const response = await fetch('/api/streams');
+                const allStreams = await response.json();
+                const streams = allStreams.filter(s => s.show_on_monitoring !== false);
+                document.getElementById('active-count').textContent = streams.filter(s => s.active).length;
+                document.getElementById('total-count').textContent = streams.length;
+                document.getElementById('last-update').textContent = 'Last update: ' + new Date().toLocaleTimeString();
+                
+                if (streams.length === 0) {
+                    document.getElementById('streams-container').innerHTML = '<div class="no-streams">Нет трансляций для отображения. <a href="/admin/">Открыть настройки →</a></div>';
+                    return;
+                }
+                
+                streams.forEach(stream => updateStreamCard(stream));
+                
+                createdCards.forEach(id => {
+                    if (!streams.find(s => s.id === id)) {
+                        const card = document.getElementById(`card-${id}`);
+                        if (card) card.remove();
+                        const videoId = `video-${id}`;
+                        if (players[videoId]) { try { players[videoId].destroy(); } catch(e) {} delete players[videoId]; }
+                        createdCards.delete(id);
+                    }
+                });
+            } catch (error) {
+                console.error('Error loading streams:', error);
+            }
+        }
+        
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                Object.keys(players).forEach(videoId => {
+                    const video = document.getElementById(videoId);
+                    if (video && video.paused) video.play().catch(e => console.log('Play failed:', e.message));
+                });
+            }
+        });
+        
+        setInterval(() => {
+            Object.keys(players).forEach(videoId => {
+                const video = document.getElementById(videoId);
+                if (video && video.paused && !video.ended) video.play().catch(() => {});
+            });
+        }, 10000);
+        
+        loadStreams();
+        setInterval(loadStreams, 5000);
+    </script>
+</body>
+</html>

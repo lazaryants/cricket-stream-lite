@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cricket Stream Bridge — Скачать видео</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <style>
+        .downloads-shell { max-width: 1200px; }
+        .page-title { margin: 0 0 18px; }
+        .page-title h2 { margin: 0 0 7px; color: #f2e9e4; font-size: 24px; }
+        .page-title p { margin: 0; color: #9a8c98; line-height: 1.55; }
+        .download-layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 20px; align-items: start; }
+        .panel { background: #1a1a2e; border: 1px solid #34344d; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,.24); }
+        .panel-head { padding: 18px 20px; background: #22223b; border-bottom: 1px solid #34344d; }
+        .panel-head h3 { margin: 0; color: #f2e9e4; font-size: 18px; }
+        .panel-body { padding: 20px; }
+        .field { margin-bottom: 16px; }
+        .field label { display: block; margin-bottom: 7px; color: #d7cdd4; font-size: 13px; font-weight: 700; }
+        .field input, .field select { width: 100%; padding: 12px 13px; background: #10101c; border: 1px solid #45455f; border-radius: 7px; color: #f2e9e4; font: inherit; outline: none; }
+        .field input:focus, .field select:focus { border-color: #7d83b2; box-shadow: 0 0 0 3px rgba(125,131,178,.18); }
+        .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+        .btn-primary { background: #2196f3; color: #fff; padding: 11px 18px; }
+        .btn-secondary { background: #5d6078; color: #fff; padding: 11px 18px; }
+        .btn-danger { background: #d9534f; color: #fff; }
+        button:disabled { opacity: .55; cursor: not-allowed; }
+        .preview { display: none; margin-top: 18px; border: 1px solid #34344d; border-radius: 10px; overflow: hidden; background: #121220; }
+        .preview.show { display: grid; grid-template-columns: 210px minmax(0,1fr); }
+        .preview-image { min-height: 118px; background: #0b0b12; display: flex; align-items: center; justify-content: center; color: #777; overflow: hidden; }
+        .preview-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .preview-info { padding: 16px; min-width: 0; }
+        .preview-info h3 { margin: 0 0 9px; color: #f2e9e4; font-size: 18px; overflow-wrap: anywhere; }
+        .meta-row { color: #aaa2ad; font-size: 13px; margin-top: 5px; }
+        .meta-row strong { color: #ddd5dc; }
+        .error-box { display: none; margin-top: 14px; color: #ff9e9e; background: rgba(244,67,54,.1); border: 1px solid rgba(244,67,54,.5); padding: 11px 12px; border-radius: 7px; overflow-wrap: anywhere; }
+        .error-box.show { display: block; }
+        .disk-card { padding: 18px; }
+        .disk-value { color: #f2e9e4; font-size: 24px; font-weight: 800; margin: 8px 0 4px; }
+        .disk-sub { color: #9a8c98; font-size: 12px; }
+        .disk-bar { height: 8px; border-radius: 999px; overflow: hidden; background: #10101c; margin-top: 13px; border: 1px solid #34344d; }
+        .disk-bar span { display: block; height: 100%; background: linear-gradient(90deg,#4caf50,#ff9800); width: 0; }
+        .note { margin-top: 14px; color: #8e8ea5; font-size: 12px; line-height: 1.55; }
+        .history-section { margin-top: 22px; }
+        .history-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+        .history-head h2 { margin: 0; color: #f2e9e4; font-size: 21px; }
+        .history-grid { display: grid; gap: 12px; }
+        .download-item { background: #1a1a2e; border: 1px solid #34344d; border-radius: 10px; padding: 14px; display: grid; grid-template-columns: 120px minmax(0,1fr) auto; gap: 14px; align-items: center; }
+        .item-thumb { width: 120px; aspect-ratio: 16/9; border-radius: 7px; overflow: hidden; background: #0b0b12; display: flex; align-items: center; justify-content: center; color: #666; }
+        .item-thumb img { width: 100%; height: 100%; object-fit: cover; }
+        .item-main { min-width: 0; }
+        .item-title { color: #f2e9e4; font-weight: 800; margin-bottom: 6px; overflow-wrap: anywhere; }
+        .item-meta { color: #9a8c98; font-size: 12px; line-height: 1.55; }
+        .item-progress { margin-top: 7px; color: #c9ada7; font-size: 12px; overflow-wrap: anywhere; }
+        .item-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+        .item-actions a { display: inline-block; padding: 9px 12px; border-radius: 6px; background: #4caf50; color: #fff; text-decoration: none; font-size: 12px; font-weight: 800; }
+        .state-pill { display: inline-flex; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; margin-right: 6px; }
+        .state-ready { color:#b9f6ca; background:rgba(76,175,80,.14); border:1px solid rgba(76,175,80,.55); }
+        .state-running,.state-queued { color:#ffe0a3; background:rgba(255,167,38,.14); border:1px solid rgba(255,167,38,.55); }
+        .state-error { color:#ffc1c1; background:rgba(244,67,54,.14); border:1px solid rgba(244,67,54,.55); }
+        .empty-history { padding: 30px; text-align: center; color: #8e8ea5; background: #171726; border: 1px dashed #3d3d57; border-radius: 10px; }
+        @media (max-width: 900px) {
+            .download-layout { grid-template-columns: 1fr; }
+            .preview.show { grid-template-columns: 1fr; }
+            .preview-image { aspect-ratio: 16/9; }
+        }
+        @media (max-width: 680px) {
+            .download-item { grid-template-columns: 90px minmax(0,1fr); }
+            .item-thumb { width: 90px; }
+            .item-actions { grid-column: 1/-1; justify-content: flex-start; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🏏 Cricket Stream Bridge</h1>
+        <div class="nav">
+            <a href="/">📺 Монитор трансляций</a>
+            <a href="/downloads/" class="active">⬇️ Скачать видео</a>
+            <a href="/admin/">⚙️ Настройка трансляций</a>
+        </div>
+    </div>
+
+    <div class="container downloads-shell">
+        <div class="page-title">
+            <h2>Скачать видео</h2>
+            <p>Проверьте ссылку, выберите максимальное качество и загрузите готовый файл с видео и звуком.</p>
+        </div>
+
+        <div class="download-layout">
+            <section class="panel">
+                <div class="panel-head"><h3>Новая загрузка</h3></div>
+                <div class="panel-body">
+                    <div class="field">
+                        <label for="download-url">Ссылка на видео</label>
+                        <input id="download-url" type="url" placeholder="https://..." autocomplete="off">
+                    </div>
+                    <div class="field">
+                        <label for="download-quality">Максимальное качество</label>
+                        <select id="download-quality">
+                            <option value="best">Лучшее доступное</option>
+                            <option value="1080">До 1080p</option>
+                            <option value="720">До 720p</option>
+                            <option value="480">До 480p</option>
+                        </select>
+                    </div>
+                    <div class="actions">
+                        <button id="probe-button" class="btn-secondary" type="button" onclick="probeVideo()">Проверить ссылку</button>
+                        <button id="download-button" class="btn-primary" type="button" onclick="startDownload()" disabled>Начать загрузку</button>
+                    </div>
+                    <div id="error-box" class="error-box"></div>
+                    <div id="preview" class="preview">
+                        <div id="preview-image" class="preview-image">Нет превью</div>
+                        <div class="preview-info">
+                            <h3 id="preview-title"></h3>
+                            <div id="preview-meta"></div>
+                        </div>
+                    </div>
+                    <div class="note">Одновременно выполняется одно задание. Файлы автоматически удаляются примерно через час. Загрузка предназначена только для материалов, которые вы вправе сохранять.</div>
+                </div>
+            </section>
+
+            <aside class="panel">
+                <div class="panel-head"><h3>Хранилище</h3></div>
+                <div class="disk-card">
+                    <div class="disk-sub">Свободно на сервере</div>
+                    <div id="disk-free" class="disk-value">—</div>
+                    <div id="disk-total" class="disk-sub">Всего: —</div>
+                    <div class="disk-bar"><span id="disk-used-bar"></span></div>
+                    <div id="disk-used" class="disk-sub" style="margin-top:8px">Использовано: —</div>
+                </div>
+            </aside>
+        </div>
+
+        <section class="history-section">
+            <div class="history-head">
+                <h2>История загрузок</h2>
+                <button class="btn-secondary" type="button" onclick="loadHistory()">Обновить</button>
+            </div>
+            <div id="history-grid" class="history-grid"></div>
+        </section>
+    </div>
+
+<script>
+let analyzedUrl = '';
+let analyzedMeta = null;
+let historyTimer = null;
+
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'
+    }[char]));
+}
+function formatBytes(value) {
+    if (value === null || value === undefined) return 'неизвестно';
+    const units = ['Б','КБ','МБ','ГБ','ТБ'];
+    let n = Number(value), i = 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return `${n.toFixed(i ? 1 : 0)} ${units[i]}`;
+}
+function formatDuration(value) {
+    if (!value) return 'неизвестно';
+    const total = Math.round(Number(value));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    return h ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${m}:${String(s).padStart(2,'0')}`;
+}
+function showError(message) {
+    const box = document.getElementById('error-box');
+    box.textContent = message;
+    box.classList.add('show');
+}
+function clearError() {
+    const box = document.getElementById('error-box');
+    box.textContent = '';
+    box.classList.remove('show');
+}
+function setButtonBusy(button, busy, text) {
+    if (!button.dataset.original) button.dataset.original = button.textContent;
+    button.disabled = busy;
+    button.textContent = busy ? text : button.dataset.original;
+}
+function resetAnalysis() {
+    analyzedUrl = '';
+    analyzedMeta = null;
+    document.getElementById('download-button').disabled = true;
+    document.getElementById('preview').classList.remove('show');
+}
+document.getElementById('download-url').addEventListener('input', resetAnalysis);
+
+async function probeVideo() {
+    clearError();
+    const url = document.getElementById('download-url').value.trim();
+    if (!url) { showError('Введите ссылку на видео'); return; }
+    const button = document.getElementById('probe-button');
+    setButtonBusy(button, true, 'Проверка...');
+    try {
+        const response = await fetch('/api/downloads/probe', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({source_url:url})
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Не удалось проверить ссылку');
+        analyzedUrl = url;
+        analyzedMeta = data;
+        renderPreview(data);
+        document.getElementById('download-button').disabled = false;
+    } catch (error) {
+        resetAnalysis();
+        showError(error.message);
+    } finally {
+        setButtonBusy(button, false, '');
+    }
+}
+function renderPreview(data) {
+    document.getElementById('preview-title').textContent = data.title || 'Видео';
+    const rows = [];
+    if (data.uploader) rows.push(`<div class="meta-row"><strong>Автор/канал:</strong> ${escapeHtml(data.uploader)}</div>`);
+    if (data.duration) rows.push(`<div class="meta-row"><strong>Длительность:</strong> ${formatDuration(data.duration)}</div>`);
+    if (data.estimated_size) rows.push(`<div class="meta-row"><strong>Оценочный размер:</strong> ${formatBytes(data.estimated_size)}</div>`);
+    if (data.extractor) rows.push(`<div class="meta-row"><strong>Источник:</strong> ${escapeHtml(data.extractor)}</div>`);
+    document.getElementById('preview-meta').innerHTML = rows.join('');
+    const image = document.getElementById('preview-image');
+    image.innerHTML = data.thumbnail ? `<img src="${escapeHtml(data.thumbnail)}" alt="">` : 'Нет превью';
+    document.getElementById('preview').classList.add('show');
+    if (data.disk) renderDisk(data.disk);
+}
+async function startDownload() {
+    clearError();
+    const url = document.getElementById('download-url').value.trim();
+    if (!analyzedMeta || url !== analyzedUrl) { showError('Сначала снова проверьте ссылку'); return; }
+    const button = document.getElementById('download-button');
+    setButtonBusy(button, true, 'Добавление...');
+    try {
+        const response = await fetch('/api/downloads', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({
+                source_url:url,
+                quality:document.getElementById('download-quality').value
+            })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Не удалось начать загрузку');
+        await loadHistory();
+        document.getElementById('download-url').value = '';
+        resetAnalysis();
+    } catch (error) {
+        showError(error.message);
+    } finally {
+        setButtonBusy(button, false, '');
+    }
+}
+function statusLabel(status) {
+    return {queued:'В очереди',running:'Загрузка',ready:'Готово',error:'Ошибка'}[status] || status;
+}
+function jobCard(job) {
+    const thumb = job.thumbnail ? `<img src="${escapeHtml(job.thumbnail)}" alt="">` : 'Видео';
+    const title = job.title || job.filename || `Задание ${job.id}`;
+    const details = [];
+    if (job.uploader) details.push(escapeHtml(job.uploader));
+    if (job.duration) details.push(formatDuration(job.duration));
+    if (job.size) details.push(formatBytes(job.size));
+    else if (job.estimated_size) details.push(`≈ ${formatBytes(job.estimated_size)}`);
+    if (job.width && job.height) details.push(`${job.width}×${job.height}`);
+    if (job.video_codec) details.push(`видео: ${escapeHtml(job.video_codec)}`);
+    if (job.audio_codec) details.push(`звук: ${escapeHtml(job.audio_codec)}`);
+    if (job.expires_at && job.status === 'ready') {
+        const minutes = Math.max(0, Math.ceil((new Date(job.expires_at).getTime() - Date.now()) / 60000));
+        details.push(`удаление через ${minutes} мин.`);
+    }
+    const actions = job.status === 'ready'
+        ? `<a href="/api/downloads/${encodeURIComponent(job.id)}/file">Скачать</a><button class="btn-danger" onclick="deleteJob('${job.id}')">Удалить</button>`
+        : job.status === 'error'
+            ? `<button class="btn-danger" onclick="deleteJob('${job.id}')">Удалить</button>`
+            : '';
+    const progress = job.error || job.progress || '';
+    return `<article class="download-item">
+        <div class="item-thumb">${thumb}</div>
+        <div class="item-main">
+            <div class="item-title">${escapeHtml(title)}</div>
+            <div class="item-meta"><span class="state-pill state-${escapeHtml(job.status)}">${statusLabel(job.status)}</span>${details.join(' · ')}</div>
+            ${progress ? `<div class="item-progress">${escapeHtml(progress)}</div>` : ''}
+        </div>
+        <div class="item-actions">${actions}</div>
+    </article>`;
+}
+async function loadHistory() {
+    try {
+        const response = await fetch('/api/downloads');
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Не удалось загрузить историю');
+        renderDisk(data.disk);
+        const grid = document.getElementById('history-grid');
+        grid.innerHTML = data.jobs.length
+            ? data.jobs.map(jobCard).join('')
+            : '<div class="empty-history">Загрузок пока нет</div>';
+    } catch (error) {
+        showError(error.message);
+    }
+}
+function renderDisk(disk) {
+    if (!disk) return;
+    document.getElementById('disk-free').textContent = formatBytes(disk.free);
+    document.getElementById('disk-total').textContent = `Всего: ${formatBytes(disk.total)}`;
+    document.getElementById('disk-used').textContent = `Использовано: ${formatBytes(disk.used)}`;
+    const percent = disk.total ? Math.min(100, Math.max(0, disk.used / disk.total * 100)) : 0;
+    document.getElementById('disk-used-bar').style.width = `${percent}%`;
+}
+async function deleteJob(jobId) {
+    if (!confirm('Удалить файл и запись из истории?')) return;
+    const response = await fetch(`/api/downloads/${encodeURIComponent(jobId)}`, {method:'DELETE'});
+    const data = await response.json();
+    if (!response.ok) { showError(data.error || 'Не удалось удалить файл'); return; }
+    await loadHistory();
+}
+loadHistory();
+historyTimer = setInterval(loadHistory, 3000);
+</script>
+</body>
+</html>

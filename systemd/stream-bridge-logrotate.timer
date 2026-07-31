@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly Cricket Stream Bridge log rotation
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=3m
+
+[Install]
+WantedBy=timers.target

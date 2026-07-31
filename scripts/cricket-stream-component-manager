@@ -1,0 +1,193 @@
+#!/opt/stream-bridge-env/bin/python3
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+from datetime import datetime, timezone
+from packaging.version import Version, InvalidVersion
+
+STATUS_PATH = '/opt/stream-bridge/config/component-status.json'
+VENV_PYTHON = '/opt/stream-bridge-env/bin/python3'
+BIN_DIR = '/opt/stream-bridge-env/bin'
+APP_SERVICE = 'stream-bridge.service'
+COMPONENTS = {
+    'streamlink': {'package': 'streamlink', 'binary': f'{BIN_DIR}/streamlink'},
+    'yt-dlp': {'package': 'yt-dlp', 'binary': f'{BIN_DIR}/yt-dlp'},
+}
+
+
+def now():
+    return datetime.now(timezone.utc).astimezone().isoformat(timespec='seconds')
+
+
+def load_status():
+    try:
+        with open(STATUS_PATH, encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return {}
+        return data
+    except Exception:
+        return {}
+
+
+def save_status(data):
+    os.makedirs(os.path.dirname(STATUS_PATH), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix='.components-', suffix='.json', dir=os.path.dirname(STATUS_PATH))
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.write('\n')
+            f.flush(); os.fsync(f.fileno())
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, STATUS_PATH)
+    finally:
+        try: os.unlink(tmp)
+        except OSError: pass
+
+
+def run(args, timeout=120):
+    return subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout, check=False)
+
+
+def installed_python_package(package):
+    r = run([VENV_PYTHON, '-m', 'pip', 'show', package], 30)
+    if r.returncode:
+        return None
+    m = re.search(r'^Version:\s*(.+)$', r.stdout, re.M)
+    return m.group(1).strip() if m else None
+
+
+def latest_pypi(package):
+    url = f'https://pypi.org/pypi/{package}/json'
+    req = urllib.request.Request(url, headers={'User-Agent': 'Cricket-Stream-Lite/1.0'})
+    with urllib.request.urlopen(req, timeout=20) as response:
+        return json.load(response)['info']['version']
+
+
+def is_newer(available, installed):
+    try:
+        return Version(available) > Version(installed)
+    except (InvalidVersion, TypeError):
+        return available != installed
+
+
+def ffmpeg_info():
+    installed = None
+    r = run(['/usr/bin/ffmpeg', '-version'], 15)
+    if r.returncode == 0:
+        first = r.stdout.splitlines()[0] if r.stdout else ''
+        m = re.search(r'ffmpeg version\s+([^\s]+)', first)
+        installed = m.group(1) if m else first
+    r = run(['/usr/bin/apt-cache', 'policy', 'ffmpeg'], 20)
+    candidate = None
+    if r.returncode == 0:
+        m = re.search(r'Candidate:\s*(\S+)', r.stdout)
+        candidate = m.group(1) if m else None
+    return {'installed': installed, 'candidate': candidate, 'available': candidate,
+            'update_available': bool(installed and candidate and candidate not in installed), 'error': None}
+
+
+def check_all(log_message=None):
+    data = load_status()
+    comps = data.setdefault('components', {})
+    logs = []
+    for name, meta in COMPONENTS.items():
+        entry = comps.setdefault(name, {})
+        try:
+            installed = installed_python_package(meta['package'])
+            available = latest_pypi(meta['package'])
+            entry.update(installed=installed, available=available,
+                         update_available=bool(installed and available and is_newer(available, installed)), error=None)
+            logs.append(f'{name}: {installed or "не установлен"} → {available or "не определено"}')
+        except Exception as exc:
+            entry['error'] = str(exc)
+            logs.append(f'{name}: ошибка проверки: {exc}')
+    try:
+        comps['ffmpeg'] = ffmpeg_info()
+        logs.append(f"ffmpeg: {comps['ffmpeg'].get('installed')} → {comps['ffmpeg'].get('candidate')}")
+    except Exception as exc:
+        comps['ffmpeg'] = {'error': str(exc)}
+        logs.append(f'ffmpeg: ошибка проверки: {exc}')
+    data['checked_at'] = now()
+    if log_message:
+        logs.insert(0, log_message)
+    data['last_log'] = '\n'.join(logs)[-4000:]
+    save_status(data)
+    return data
+
+
+def wait_health(timeout=35):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        r = run(['/usr/bin/curl', '-fsS', 'http://127.0.0.1:5000/api/status'], 5)
+        if r.returncode == 0:
+            return True
+        time.sleep(1)
+    return False
+
+
+def update_component(name):
+    if name not in COMPONENTS:
+        raise SystemExit(f'Unsupported component: {name}')
+    meta = COMPONENTS[name]
+    package = meta['package']
+    old = installed_python_package(package)
+    data = load_status(); entry = data.setdefault('components', {}).setdefault(name, {})
+    entry.update(updating=True, error=None, update_started_at=now())
+    data['last_log'] = f'Запущено обновление {name}. Текущая версия: {old or "не определена"}'
+    save_status(data)
+    log = []
+    try:
+        r = run([VENV_PYTHON, '-m', 'pip', 'install', '--upgrade', package], 600)
+        log.append(r.stdout[-5000:])
+        if r.returncode != 0:
+            raise RuntimeError(f'pip завершился с кодом {r.returncode}')
+        new = installed_python_package(package)
+        if not new:
+            raise RuntimeError('Новая версия не определяется после установки')
+        vr = run([meta['binary'], '--version'], 30)
+        log.append(vr.stdout[-1000:])
+        if vr.returncode != 0:
+            raise RuntimeError('Проверка исполняемого файла завершилась ошибкой')
+        run(['/bin/systemctl', 'restart', APP_SERVICE], 60)
+        if not wait_health():
+            raise RuntimeError('Backend не прошёл проверку после обновления')
+        data = check_all(f'{name} успешно обновлён: {old or "?"} → {new}')
+        entry = data.setdefault('components', {}).setdefault(name, {})
+        entry.update(updating=False, updated_at=now(), previous_version=old, error=None)
+        data['last_log'] = (f'{name} успешно обновлён: {old or "?"} → {new}\n' + '\n'.join(log))[-4000:]
+        save_status(data)
+    except Exception as exc:
+        rollback_log = ''
+        if old:
+            rr = run([VENV_PYTHON, '-m', 'pip', 'install', f'{package}=={old}'], 600)
+            rollback_log = rr.stdout[-3000:]
+            run(['/bin/systemctl', 'restart', APP_SERVICE], 60)
+            wait_health(25)
+        data = load_status(); entry = data.setdefault('components', {}).setdefault(name, {})
+        entry.update(updating=False, error=str(exc), rollback_version=old, updated_at=now())
+        data['last_log'] = (f'Ошибка обновления {name}: {exc}\nОткат к {old or "не выполнен"}\n' + '\n'.join(log) + '\n' + rollback_log)[-4000:]
+        save_status(data)
+        raise
+
+
+def main():
+    if len(sys.argv) != 2:
+        raise SystemExit('Usage: component-manager check|update-streamlink|update-ytdlp')
+    command = sys.argv[1]
+    if command == 'check':
+        check_all('Проверка версий завершена')
+    elif command == 'update-streamlink':
+        update_component('streamlink')
+    elif command == 'update-ytdlp':
+        update_component('yt-dlp')
+    else:
+        raise SystemExit('Unsupported command')
+
+if __name__ == '__main__':
+    main()
